@@ -13,6 +13,9 @@
 // Starting globals:
 unsigned long lastTouchTime = 0;
 unsigned long lastClockMoveTime = 0;
+String todoistToken = "";
+const char* todoistUrl = "https://api.todoist.com/api/v1/tasks";
+HTTPClient todoistClient;
 
 // Create the touchscreen object
 Adafruit_TSC2007 touch = Adafruit_TSC2007();
@@ -92,11 +95,43 @@ WebServer server(80);
 void launchSetupPortal(); 
 unsigned long testFillScreen();
 
+void getTodoistTasks() {
+  if (WiFi.status() != WL_CONNECTED) {
+    Serial.println("WiFi not connected. Cannot contact Todoist.");
+    return;
+  }
+
+  if (todoistToken == "") {
+    Serial.println("Todoist token is empty.");
+    return;
+  }
+
+  todoistClient.begin(todoistUrl);
+  todoistClient.addHeader("Authorization", "Bearer " + todoistToken);
+
+  int httpCode = todoistClient.GET();
+
+  Serial.print("Todoist HTTP response: ");
+  Serial.println(httpCode);
+
+  if (httpCode > 0) {
+    String response = todoistClient.getString();
+    Serial.println("Todoist response:");
+    Serial.println(response);
+  } else {
+    Serial.print("Todoist request failed: ");
+    Serial.println(todoistClient.errorToString(httpCode));
+  }
+
+  todoistClient.end();
+}
+
 // Simple HTML page hosted on the ESP32
 const char PORTAL_HTML[] PROGMEM = R"===(
 <!DOCTYPE html><html><head><meta name="viewport" content="width=device-width, initial-scale=1">
 <style>body{font-family:Arial;margin:30px;text-align:center;} input{width:100%;padding:10px;margin:10px 0;}</style>
 </head><body><h2>Turret32 Wi-Fi Setup</h2>
+<p>Enter your WiFi SSID and password.</p>
 <form action="/save" method="POST">
 <input type="text" name="ssid" placeholder="Wi-Fi Name (SSID)" required>
 <input type="password" name="password" placeholder="Password" required>
@@ -109,7 +144,7 @@ void setup() {
   delay(100);
   tft.setRotation(1);
   Serial.begin(115200);
-  delay(500);
+  delay(2000);
 
   // --- Splash Screen ---
   testFillScreen();
@@ -207,6 +242,9 @@ void setup() {
 
   lastTouchTime = millis();
   lastClockMoveTime = millis();
+
+  loading("Syncing Todoist...");
+  getTodoistTasks();
   
   delay(1000); // show status for 1 second before looping
   testFillScreen();
@@ -267,11 +305,18 @@ void loop(void) {
       swipeStartY = -1;
   }
 
+/*
+For the switch-case script below, it contains two major different types of 'levels'.
+The first is an initialization level, and the second is a loop level.
+Each level descriptor will contain either init for initilization, or loop for a repeating loop.
+Init levels change the level at the bottom of the script, so that it only runs through once before proceeding to a loop.
+Loop levels do not change the level unless prompted to by the user, or a button that may be on the screen.
+*/
+
 
 
   switch (level) {
-    case 0:
-      // Clock initialization script
+    case 0: // Clock initialization script (init)
       tft.fillScreen(ILI9341_BLACK); 
       tft.setTextColor(ILI9341_WHITE); 
       tft.setTextSize(4);
@@ -279,7 +324,7 @@ void loop(void) {
       configTzTime("EST5EDT,M3.2.0,M11.1.0", "pool.ntp.org");
       level = 1;
       break;
-    case 1: {
+    case 1: { // Clock loop script (loop)
       struct tm timeinfo;
       if (getLocalTime(&timeinfo)) {
         
@@ -296,7 +341,7 @@ void loop(void) {
         }
       }
       break;
-    } case 2: {
+    } case 2: { // Sync NTP time (init)
       tft.fillScreen(ILI9341_BLACK);
       tft.setCursor(25, 25);
       tft.printf("Syncing...");
@@ -352,8 +397,8 @@ void launchSetupPortal() {
       preferences.putString("password", new_password);
       preferences.end();
 
-      server.send(200, "text/html", "<html><body><h1>Saved!</h1><p>Rebooting...</p></body></html>");
-      delay(2000);
+      server.send(200, "text/html", "<html><body><h1>Saved!</h1><p>Device will reboot shortly...</p></body></html>");
+      delay(5000);
       ESP.restart(); // Reboot device to restart back into setup()
     }
   });
